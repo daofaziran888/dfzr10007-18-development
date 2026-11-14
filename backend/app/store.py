@@ -14,6 +14,9 @@ class Store:
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
+        # 数据准备流水线完成水位：key 为输出目标（目标数据集），
+        # 由 etl 模块在任务完成时写入，refresh 模块读取后决定从哪个增量字段继续。
+        self._watermarks: dict[str, dict[str, Any]] = {}
 
     def module_names(self) -> list[str]:
         return sorted(self._tables)
@@ -26,6 +29,16 @@ class Store:
             if int(row.get("id", 0)) == entry_id:
                 return row
         return None
+
+    def set_watermark(self, target: str, record: dict[str, Any]) -> None:
+        """登记某个输出目标的完成水位，同一目标只保留最新一次。"""
+        self._watermarks[target] = dict(record)
+
+    def get_watermark(self, target: str) -> dict[str, Any] | None:
+        return self._watermarks.get(target)
+
+    def watermarks(self) -> list[dict[str, Any]]:
+        return [dict(record, 输出目标=target) for target, record in sorted(self._watermarks.items())]
 
     def overview(self) -> dict[str, object]:
         modules: list[dict[str, object]] = []

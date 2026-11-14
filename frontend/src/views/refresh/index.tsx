@@ -9,14 +9,17 @@ const columns = [
   "刷新周期",
   "刷新范围",
   "增量字段",
-  "全量标记",
+  "上游水位",
+  "水位来源任务",
+  "上次刷新水位",
   "下一次刷新",
   "策略状态"
 ]
 const actions = [
   "启用刷新",
   "暂停刷新",
-  "关闭刷新"
+  "关闭刷新",
+  "执行刷新"
 ]
 const statuses = [
   "已创建",
@@ -24,26 +27,13 @@ const statuses = [
   "已暂停",
   "已关闭"
 ]
-const stats = [
-  {
-    "label": "刷新策略总数",
-    "value": 0
-  },
-  {
-    "label": "生效中策略",
-    "value": 0
-  },
-  {
-    "label": "已暂停刷新",
-    "value": 0
-  }
-]
 
 type Row = Record<string, string | number | null>
 
 export default function RefreshView() {
   const [rows, setRows] = useState<Row[]>([])
   const [total, setTotal] = useState(0)
+  const [message, setMessage] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
   const [filters, setFilters] = useState<Record<string, string>>({})
   const filterFields = useMemo(() => columns.slice(0, 3), [])
@@ -68,19 +58,32 @@ export default function RefreshView() {
     void reload()
   }, [reload])
 
+  const stats = useMemo(() => {
+    const count = (name: string) => rows.filter((row) => row.status === name || row.策略状态 === name).length
+    return [
+      { label: '刷新策略总数', value: rows.length },
+      { label: '生效中策略', value: count('生效中') },
+      { label: '已暂停刷新', value: count('已暂停') },
+    ]
+  }, [rows])
+
   async function runAction(action: string, row: Row) {
+    setMessage('')
     setErrorMessage('')
     try {
       const response = await request(`${ENDPOINT}/${row.id}/actions`, {
         method: 'POST',
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ values: { action } }),
       })
-      if (!response.ok) {
-        throw new Error('数据定时刷新动作未生效，请稍后重试')
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message ?? payload.detail ?? '数据定时刷新动作未生效，请稍后重试')
       }
+      setMessage(payload.message ?? '动作已执行')
       await reload()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '数据定时刷新操作失败')
+      await reload()
     }
   }
 
@@ -89,7 +92,7 @@ export default function RefreshView() {
       <header className="page-head">
         <div>
           <h2>数据定时刷新管理</h2>
-          <p className="page-desc">维护数据刷新的周期配置、范围控制与增量策略，为数据定时刷新提供可验证的数据工程流程。</p>
+          <p className="page-desc">维护数据刷新的周期配置、范围控制与增量策略，执行刷新时读取数据准备流水线的完成水位，从对应增量字段继续。</p>
         </div>
         <div className="page-actions">
           <button className="btn primary" type="button" onClick={() => setErrorMessage('刷新策略登记入口尚未接入审批流')}>
@@ -135,7 +138,13 @@ export default function RefreshView() {
         <tbody>
           {rows.map((row) => (
             <tr key={String(row.id)}>
-              {columns.map((column) => <td key={column}>{row[column] ?? '—'}</td>)}
+              {columns.map((column) => (
+                <td key={column} className={column === '上游水位' && !row[column] ? 'error-text' : undefined}>
+                  {column === '上游水位' && !row[column]
+                    ? (row.上游异常 ? String(row.上游异常) : '暂无水位')
+                    : (row[column] ?? '—')}
+                </td>
+              ))}
               <td className="row-actions">
                 {actions.map((action) => (
                   <button key={action} className="link" type="button" onClick={() => void runAction(action, row)}>
@@ -155,6 +164,7 @@ export default function RefreshView() {
 
       <footer className="page-foot">
         <span>共 {total} 条数据定时刷新记录</span>
+        {message && <span className="ok-text">{message}</span>}
         {errorMessage && <span className="error-text">{errorMessage}</span>}
       </footer>
     </section>
